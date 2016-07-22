@@ -140,6 +140,8 @@ int crimson::qos_simulation::parse_config_file(const std::string &fname, sim_con
       st.server_iops = std::stoul(val);
     if (!cf.read(section, "server_threads", val))
       st.server_threads = std::stoul(val);
+    if (!cf.read(section, "server_use_heap", val))
+      st.server_use_heap = stobool(val);
     g_conf.srv_group.push_back(st);
   }
 

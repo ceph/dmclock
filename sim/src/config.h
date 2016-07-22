@@ -73,13 +73,15 @@ namespace crimson {
       uint server_count;
       uint server_iops;
       uint server_threads;
+      bool server_use_heap;
 
       srv_group_t(uint _server_count = 100,
 		  uint _server_iops = 40,
 		  uint _server_threads = 1) :
 	server_count(_server_count),
 	server_iops(_server_iops),
-	server_threads(_server_threads)
+	server_threads(_server_threads),
+	server_use_heap (true)
       {
 	// empty
       }
@@ -89,7 +91,8 @@ namespace crimson {
 	out <<
 	  "server_count = " << srv_group.server_count << "\n" <<
 	  "server_iops = " << srv_group.server_iops << "\n" <<
-	  "server_threads = " << srv_group.server_threads;
+	  "server_threads = " << srv_group.server_threads << "\n" <<
+	  "server_use_heap = " << srv_group.server_use_heap;
 	return out;
       }
     }; // class srv_group_t

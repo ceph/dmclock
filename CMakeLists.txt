@@ -17,6 +17,10 @@ if(PROFILE)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DPROFILE")
 endif()
 
+if(USE_SIMPLE_PQ)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUSE_SIMPLE_PQ")
+endif()
+
 add_subdirectory(src)
 add_subdirectory(sim)
 

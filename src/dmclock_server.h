@@ -13,6 +13,7 @@
  */
 // #define USE_PROP_HEAP
 // #define DO_NOT_DELAY_TAG_CALC
+//#define USE_SIMPLE_PQ
 
 #pragma once
 
@@ -33,7 +34,9 @@
 
 #include <boost/variant.hpp>
 
+#include "indirect_intrusive_base.h"
 #include "indirect_intrusive_heap.h"
+#include "indirect_intrusive_simple_pq.h"
 #include "run_every.h"
 #include "dmclock_util.h"
 #include "dmclock_recs.h"
@@ -423,6 +426,7 @@ namespace crimson {
       size_t request_count() const {
 	DataGuard g(data_mtx);
 	size_t total = 0;
+
 	for (auto i = resv_heap.cbegin(); i != resv_heap.cend(); ++i) {
 	  total += i->request_count();
 	}
@@ -456,6 +460,7 @@ namespace crimson {
 #if USE_PROP_HEAP
 	    prop_heap.adjust(*i.second);
 #endif
+
 	    any_removed = true;
 	  }
 	}
@@ -489,15 +494,19 @@ namespace crimson {
 	}
 
 	i->second->requests.clear();
-
+	
 	resv_heap.adjust(*i->second);
 	limit_heap.adjust(*i->second);
 	ready_heap.adjust(*i->second);
 #if USE_PROP_HEAP
 	prop_heap.adjust(*i->second);
 #endif
+
       }
 
+      bool heap_used() {
+	return use_heap;
+      }
 
     protected:
 
@@ -566,35 +575,56 @@ namespace crimson {
       // stable mappiing between client ids and client queues
       std::map<C,ClientRecRef> client_map;
 
+      using resv_comp  = ClientCompare<&RequestTag::reservation, ReadyOption::ignore, false>;
+      using limit_comp = ClientCompare<&RequestTag::limit, ReadyOption::lowers, false>;
+      using ready_comp = ClientCompare<&RequestTag::proportion, ReadyOption::raises, true>;
+#if USE_PROP_HEAP
+      using prop_comp  = ClientCompare<&RequestTag::proportion, ReadyOption::ignore, true>;
+#endif
 
+#ifndef USE_SIMPLE_PQ
       c::IndIntruHeap<ClientRecRef,
-		      ClientRec,
-		      &ClientRec::reserv_heap_data,
-		      ClientCompare<&RequestTag::reservation,
-				    ReadyOption::ignore,
-				    false>> resv_heap;
+		ClientRec,
+		&ClientRec::reserv_heap_data,
+		resv_comp> resv_heap;
 #if USE_PROP_HEAP
       c::IndIntruHeap<ClientRecRef,
 		      ClientRec,
 		      &ClientRec::prop_heap_data,
-		      ClientCompare<&RequestTag::proportion,
-				    ReadyOption::ignore,
-				    true>> prop_heap;
+		      prop_comp> prop_heap;
 #endif
       c::IndIntruHeap<ClientRecRef,
 		      ClientRec,
 		      &ClientRec::lim_heap_data,
-		      ClientCompare<&RequestTag::limit,
-				    ReadyOption::lowers,
-				    false>> limit_heap;
+		      limit_comp> limit_heap;
       c::IndIntruHeap<ClientRecRef,
 		      ClientRec,
 		      &ClientRec::ready_heap_data,
-		      ClientCompare<&RequestTag::proportion,
-				    ReadyOption::raises,
-				    true>> ready_heap;
+		      ready_comp> ready_heap;
 
-      // if all reservations are met and all other requestes are under
+#else
+      c::IndIntruSimplePQ<ClientRecRef,
+			  ClientRec,
+			  &ClientRec::reserv_heap_data,
+			  resv_comp> resv_heap;
+#if USE_PROP_HEAP
+      c::IndIntruSimplePQ<ClientRecRef,
+			  ClientRec,
+			  &ClientRec::prop_heap_data,
+			  prop_comp> prop_heap;
+#endif
+      c::IndIntruSimplePQ<ClientRecRef,
+			  ClientRec,
+			  &ClientRec::lim_heap_data,
+			  limit_comp> limit_heap;
+      c::IndIntruSimplePQ<ClientRecRef,
+			  ClientRec,
+			  &ClientRec::ready_heap_data,
+			  ready_comp> ready_heap;
+
+#endif
+
+      // if all reservations are met and all other requests are under
       // limit, this will allow the request next in terms of
       // proportion to still get issued
       bool             allow_limit_break;
@@ -613,6 +643,9 @@ namespace crimson {
       Duration                  erase_age;
       Duration                  check_time;
       std::deque<MarkPoint>     clean_mark_points;
+
+      // to report which data-structure is used
+      bool                      use_heap;
 
       // NB: All threads declared at end, so they're destructed first!
 
@@ -634,6 +667,11 @@ namespace crimson {
 	erase_age(std::chrono::duration_cast<Duration>(_erase_age)),
 	check_time(std::chrono::duration_cast<Duration>(_check_time))
       {
+#ifndef USE_SIMPLE_PQ
+	use_heap = true;
+#else
+	use_heap = false;
+#endif
 	assert(_erase_age >= _idle_age);
 	assert(_check_time < _idle_age);
 	cleaning_job =
@@ -667,12 +705,14 @@ namespace crimson {
 	  ClientInfo info = client_info_f(client_id);
 	  ClientRecRef client_rec =
 	    std::make_shared<ClientRec>(client_id, info, tick);
+
 	  resv_heap.push(client_rec);
 #if USE_PROP_HEAP
 	  prop_heap.push(client_rec);
 #endif
 	  limit_heap.push(client_rec);
 	  ready_heap.push(client_rec);
+
 	  client_map[client_id] = client_rec;
 	  temp_client = &(*client_rec); // address of obj of shared_ptr
 	}
@@ -745,17 +785,17 @@ namespace crimson {
 #if USE_PROP_HEAP
 	prop_heap.adjust(client);
 #endif
+
       } // add_request
 
 
       // data_mtx should be held when called; top of heap should have
       // a ready request
-      template<typename C1, IndIntruHeapData ClientRec::*C2, typename C3>
-      void pop_process_request(IndIntruHeap<C1, ClientRec, C2, C3>& heap,
+      void pop_process_request(ClientRec& top,
 			       std::function<void(const C& client,
 						  RequestRef& request)> process) {
+
 	// gain access to data
-	ClientRec& top = heap.top();
 	ClientReq& first = top.next_request();
 	RequestRef request = std::move(first.request);
 
@@ -767,7 +807,7 @@ namespace crimson {
 	  ClientReq& next_first = top.next_request();
 	  next_first.tag = RequestTag(first.tag, top.info,
 	                              ReqParams(top.cur_delta, top.cur_rho),
-				      next_first.tag.arrival);
+					  next_first.tag.arrival);
 
   	  // copy tag to previous tag for client
 	  top.update_req_tag(next_first.tag, tick);
@@ -783,6 +823,7 @@ namespace crimson {
 
 	// process
 	process(top.client, request);
+
       } // pop_process_request
 
 
@@ -806,6 +847,7 @@ namespace crimson {
 	  prop_heap.display_sorted(std::cout << "PROPO:", filter) << std::endl;
 	}
 #endif
+
       } // display_queues
 
 
@@ -847,7 +889,6 @@ namespace crimson {
 	}
 
 	// try constraint (reservation) based scheduling
-
 	auto& reserv = resv_heap.top();
 	if (reserv.has_request() &&
 	    reserv.next_request().tag.reservation <= now) {
@@ -903,16 +944,20 @@ namespace crimson {
 	// reservation item or next limited item comes up
 
 	Time next_call = TimeMax;
-	if (resv_heap.top().has_request()) {
+	auto& resv_top = resv_heap.top();
+	if (resv_top.has_request()) {
 	  next_call =
 	    min_not_0_time(next_call,
-			   resv_heap.top().next_request().tag.reservation);
+			   resv_top.next_request().tag.reservation);
 	}
-	if (limit_heap.top().has_request()) {
-	  const auto& next = limit_heap.top().next_request();
+
+	auto& limit_top = limit_heap.top();
+	if (limit_top.has_request()) {
+	  const auto& next = limit_top.next_request();
 	  assert(!next.tag.ready || max_tag == next.tag.proportion);
 	  next_call = min_not_0_time(next_call, next.tag.limit);
 	}
+
 	if (next_call < TimeMax) {
 	  result.type = NextReqType::future;
 	  result.when_ready = next_call;
@@ -980,11 +1025,18 @@ namespace crimson {
 
 
       // data_mtx must be held by caller
-      template<IndIntruHeapData ClientRec::*C1,typename C2>
+      template<IndIntruHeapData ClientRec::*C1, typename C2>
       void delete_from_heap(ClientRecRef& client,
-			    c::IndIntruHeap<ClientRecRef,ClientRec,C1,C2>& heap) {
-	auto i = heap.rfind(client);
-	heap.remove(i);
+			    c::IndIntruBase<ClientRecRef,ClientRec,C1, C2>& base) {
+#ifndef USE_SIMPLE_PQ
+	using iih = c::IndIntruHeap<ClientRecRef,ClientRec,C1, C2>;
+	iih *derived = static_cast<iih*> (&base);
+#else
+	using iiq = c::IndIntruSimplePQ<ClientRecRef,ClientRec,C1, C2>;
+	iiq *derived = static_cast<iiq*>(&base);
+#endif
+	auto i = derived->rfind(client);
+	derived->remove(i);
       }
 
 
@@ -1181,12 +1233,12 @@ namespace crimson {
 
 	switch(next.heap_id) {
 	case super::HeapId::reservation:
-	  super::pop_process_request(this->resv_heap,
+	  super::pop_process_request(this->resv_heap.top(),
 				     process_f(result, PhaseType::reservation));
 	  ++this->reserv_sched_count;
 	  break;
 	case super::HeapId::ready:
-	  super::pop_process_request(this->ready_heap,
+	  super::pop_process_request(this->ready_heap.top(),
 				     process_f(result, PhaseType::priority));
 	  { // need to use retn temporarily
 	    auto& retn = boost::get<typename PullReq::Retn>(result.data);
@@ -1371,11 +1423,9 @@ namespace crimson {
       // data_mtx should be held when called; furthermore, the heap
       // should not be empty and the top element of the heap should
       // not be already handled
-      template<typename C1, IndIntruHeapData super::ClientRec::*C2, typename C3>
-      C submit_top_request(IndIntruHeap<C1,typename super::ClientRec,C2,C3>& heap,
-			   PhaseType phase) {
+      C submit_top_request(typename super::ClientRec& top, PhaseType phase) {
 	C client_result;
-	super::pop_process_request(heap,
+	super::pop_process_request(top,
 				   [this, phase, &client_result]
 				   (const C& client,
 				    typename super::RequestRef& request) {
@@ -1392,13 +1442,13 @@ namespace crimson {
 	switch(heap_id) {
 	case super::HeapId::reservation:
 	  // don't need to note client
-	  (void) submit_top_request(this->resv_heap, PhaseType::reservation);
+	  (void) submit_top_request(this->resv_heap.top(), PhaseType::reservation);
 	  // unlike the other two cases, we do not reduce reservation
 	  // tags here
 	  ++this->reserv_sched_count;
 	  break;
 	case super::HeapId::ready:
-	  client = submit_top_request(this->ready_heap, PhaseType::priority);
+	  client = submit_top_request(this->ready_heap.top(), PhaseType::priority);
 	  super::reduce_reservation_tags(client);
 	  ++this->prop_sched_count;
 	  break;

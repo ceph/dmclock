@@ -15,6 +15,11 @@ When running cmake, set the build type with either:
 To turn on profiling, run cmake with an additional:
 
     -DPROFILE=yes
+    
+To compare current heap implementation with a simple heap (that uses linear search),
+run cmake with an additional:
+
+    -DUSE_SIMPLE_HEAP=yes
 
 ## Running make
 
@@ -37,4 +42,5 @@ priority queue implementations could be added in the future.
 
 ## Using dmclock
 
-To be written....
+Use `./dmc_sim -c config_file` to load parameters from 'config_file' while
+running dmclock simulator. 

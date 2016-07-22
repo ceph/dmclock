@@ -172,7 +172,7 @@ int main(int argc, char* argv[]) {
                                                            server_id,
                                                            phase);
     };
-
+    // server_use_heap
     test::CreateQueueF create_queue_f =
         [&](test::DmcQueue::CanHandleRequestFunc can_f,
             test::DmcQueue::HandleRequestFunc handle_f) -> test::DmcQueue* {

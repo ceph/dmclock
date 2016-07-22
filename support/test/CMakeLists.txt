@@ -10,7 +10,7 @@ set(srcs
   test_intrusive_heap.cc)
 add_executable(test_intru_heap test_intrusive_heap.cc)
 
-set(test_srcs test_indirect_intrusive_heap.cc)
+set(test_srcs test_indirect_intrusive_heap.cc test_indirect_intrusive_simple_pq.cc test_indirect_intrusive_base.cc)
 
 set_source_files_properties(${srcs} ${test_srcs}
   PROPERTIES
@@ -19,12 +19,12 @@ set_source_files_properties(${srcs} ${test_srcs}
 
 add_executable(data-struct-tests EXCLUDE_FROM_ALL ${test_srcs})
 
-set_target_properties(data-struct-tests
+set_target_properties(data-struct-tests 
   PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ../../test)
 
 target_link_libraries(data-struct-tests
-  PUBLIC pthread ${GTEST_LIBRARY} ${GTEST_MAIN_LIBRARY})
+  PUBLIC ${GTEST_LIBRARY} ${GTEST_MAIN_LIBRARY} pthread )
 
 # for every argument, adds a test with that name, using it as a gtest filter
 function(make_tests)
