@@ -48,6 +48,7 @@ namespace crimson {
       typename std::result_of<C(const T&,const T&)>::type>::value,
       "class C must define operator() to take two const T& and return a bool");
 
+    static_assert(K >= 1, "K (degree of branching) must be at least l");
 
     class Iterator {
       friend IndIntruHeap<I, T, heap_info, C, K>;
@@ -397,17 +398,13 @@ namespace crimson {
 	index_t li = lhs(i);
 
 	if (li < count) {
-	  index_t ri = rhs(i);
+	  index_t ri = std::min(rhs(i), count - 1);
 
 	  // find the index of min. child
 	  index_t min_i = li;
-	  for (index_t k = li + 1 ; k <= ri ; k++ ){
-	    if (k < count) {
-	      if (comparator(*data[k], *data[min_i])) {
-		min_i = k;
-	      }
-	    } else {
-	      break;
+	  for (index_t k = li + 1; k <= ri; ++k) {
+	    if (comparator(*data[k], *data[min_i])) {
+	      min_i = k;
 	    }
 	  }
 
@@ -417,10 +414,11 @@ namespace crimson {
 	    intru_data_of(data[min_i]) = min_i;
 	    i = min_i;
 	  } else {
+	    // no child is smaller
 	    break;
 	  }
-
 	} else {
+	  // no children
 	  break;
 	}
       }
