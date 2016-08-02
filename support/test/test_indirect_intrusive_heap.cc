@@ -224,7 +224,7 @@ TEST(IndIntruHeap, K_3) {
 			Elem,
 			&Elem::heap_data,
 			ElemCompare,
-			3> heap;
+			0> heap;
 
   EXPECT_TRUE(heap.empty());
 
