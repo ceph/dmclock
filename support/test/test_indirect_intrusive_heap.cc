@@ -8,6 +8,7 @@
 #include <iostream>
 #include <memory>
 #include <set>
+#include <limits>
 
 #include "gtest/gtest.h"
 
@@ -224,7 +225,7 @@ TEST(IndIntruHeap, K_3) {
 			Elem,
 			&Elem::heap_data,
 			ElemCompare,
-			0> heap;
+			3> heap;
 
   EXPECT_TRUE(heap.empty());
 
@@ -392,6 +393,77 @@ TEST(IndIntruHeap, K_10) {
   heap.pop();
   EXPECT_TRUE(heap.empty());
 }
+
+
+TEST(IndIntruHeap, multi_K) {
+  crimson::IndIntruHeap<std::shared_ptr<Elem>,
+			Elem,
+			&Elem::heap_data,
+			ElemCompare,
+			1> heap1;
+
+  crimson::IndIntruHeap<std::shared_ptr<Elem>,
+			Elem,
+			&Elem::heap_data,
+			ElemCompare,
+			2> heap2;
+
+  crimson::IndIntruHeap<std::shared_ptr<Elem>,
+			Elem,
+			&Elem::heap_data,
+			ElemCompare,
+			3> heap3;
+
+  crimson::IndIntruHeap<std::shared_ptr<Elem>,
+			Elem,
+			&Elem::heap_data,
+			ElemCompare,
+			10> heap10;
+
+  // 250 should give us at least 4 levels on all heaps
+  constexpr size_t count = 250;
+
+  std::srand(std::time(0)); // use current time as seed for random generator
+
+  // insert same set of random values into the four heaps
+  for (size_t i = 0; i < count; ++i) {
+    int value = std::rand() % 201 - 100; // -100...+100
+    auto data = std::make_shared<Elem>(value);
+    heap1.push(data);
+    heap2.push(data);
+    heap3.push(data);
+    heap10.push(data);
+  }
+
+  auto bound = std::numeric_limits<decltype(Elem::data)>::min();
+
+  for (size_t i = 0; i < count; ++i) {
+    auto current = heap1.top().data;
+
+    EXPECT_GE(current, bound) <<
+      "we should never go down, only increase or remain the same";
+    EXPECT_EQ(current, heap2.top().data) <<
+      "heap1's data and heap2's data should match";
+    EXPECT_EQ(current, heap3.top().data) <<
+      "heap1's data and heap3's data should match";
+    EXPECT_EQ(current, heap10.top().data) <<
+      "heap1's data and heap10's data should match";
+
+    heap1.pop();
+    heap2.pop();
+    heap3.pop();
+    heap10.pop();
+
+    bound = current;
+  }
+  
+  EXPECT_TRUE(heap1.empty());
+  EXPECT_TRUE(heap2.empty());
+  EXPECT_TRUE(heap3.empty());
+  EXPECT_TRUE(heap10.empty());
+}
+
+
 
 TEST(IndIntruHeap, demote) {
   crimson::IndIntruHeap<std::unique_ptr<Elem>,
