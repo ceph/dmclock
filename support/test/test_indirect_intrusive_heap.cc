@@ -418,6 +418,12 @@ TEST(IndIntruHeap, multi_K) {
 			Elem,
 			&Elem::heap_data,
 			ElemCompare,
+			4> heap4;
+
+  crimson::IndIntruHeap<std::shared_ptr<Elem>,
+			Elem,
+			&Elem::heap_data,
+			ElemCompare,
 			10> heap10;
 
   // 250 should give us at least 4 levels on all heaps
@@ -432,6 +438,7 @@ TEST(IndIntruHeap, multi_K) {
     heap1.push(data);
     heap2.push(data);
     heap3.push(data);
+    heap4.push(data);
     heap10.push(data);
   }
 
@@ -446,23 +453,26 @@ TEST(IndIntruHeap, multi_K) {
       "heap1's data and heap2's data should match";
     EXPECT_EQ(current, heap3.top().data) <<
       "heap1's data and heap3's data should match";
+    EXPECT_EQ(current, heap4.top().data) <<
+      "heap1's data and heap4's data should match";
     EXPECT_EQ(current, heap10.top().data) <<
       "heap1's data and heap10's data should match";
 
     heap1.pop();
     heap2.pop();
     heap3.pop();
+    heap4.pop();
     heap10.pop();
 
     bound = current;
   }
   
-  EXPECT_TRUE(heap1.empty());
-  EXPECT_TRUE(heap2.empty());
-  EXPECT_TRUE(heap3.empty());
-  EXPECT_TRUE(heap10.empty());
+  EXPECT_TRUE(heap1.empty()) << "should be empty after all elements popped";
+  EXPECT_TRUE(heap2.empty()) << "should be empty after all elements popped";
+  EXPECT_TRUE(heap3.empty()) << "should be empty after all elements popped";
+  EXPECT_TRUE(heap4.empty()) << "should be empty after all elements popped";
+  EXPECT_TRUE(heap10.empty()) << "should be empty after all elements popped";
 }
-
 
 
 TEST(IndIntruHeap, demote) {
