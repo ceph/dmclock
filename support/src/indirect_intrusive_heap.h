@@ -33,8 +33,10 @@ namespace crimson {
    *
    * heap_info is a data member pointer as to where the heap data in T
    * is stored.
+   *
+   * K is the branching factor of the heap, default is 2 (binary heap).
    */
-  template<typename I, typename T, IndIntruHeapData T::*heap_info, typename C>
+  template<typename I, typename T, IndIntruHeapData T::*heap_info, typename C, uint K = 2>
   class IndIntruHeap {
 
     static_assert(
@@ -46,14 +48,15 @@ namespace crimson {
       typename std::result_of<C(const T&,const T&)>::type>::value,
       "class C must define operator() to take two const T& and return a bool");
 
+    static_assert(K >= 1, "K (degree of branching) must be at least l");
 
     class Iterator {
-      friend IndIntruHeap<I, T, heap_info, C>;
+      friend IndIntruHeap<I, T, heap_info, C, K>;
 
-      IndIntruHeap<I, T, heap_info, C>& heap;
+      IndIntruHeap<I, T, heap_info, C, K>& heap;
       size_t                            index;
 
-      Iterator(IndIntruHeap<I, T, heap_info, C>& _heap, size_t _index) :
+      Iterator(IndIntruHeap<I, T, heap_info, C, K>& _heap, size_t _index) :
 	heap(_heap),
 	index(_index)
       {
@@ -120,12 +123,12 @@ namespace crimson {
 
     
     class ConstIterator {
-      friend IndIntruHeap<I, T, heap_info, C>;
+      friend IndIntruHeap<I, T, heap_info, C, K>;
 
-      const IndIntruHeap<I, T, heap_info, C>& heap;
+      const IndIntruHeap<I, T, heap_info, C, K>& heap;
       size_t                                  index;
 
-      ConstIterator(const IndIntruHeap<I, T, heap_info, C>& _heap, size_t _index) :
+      ConstIterator(const IndIntruHeap<I, T, heap_info, C, K>& _heap, size_t _index) :
 	heap(_heap),
 	index(_index)
       {
@@ -199,7 +202,7 @@ namespace crimson {
       // empty
     }
 
-    IndIntruHeap(const IndIntruHeap<I,T,heap_info,C>& other) :
+    IndIntruHeap(const IndIntruHeap<I,T,heap_info,C,K>& other) :
       count(other.count)
     {
       for (uint i = 0; i < other.count; ++i) {
@@ -331,7 +334,7 @@ namespace crimson {
 		    "cannot call display_sorted when class I is not copy"
 		    " constructible");
 
-      IndIntruHeap<I,T,heap_info,C> copy = *this;
+      IndIntruHeap<I,T,heap_info,C,K> copy = *this;
 
       bool first = true;
       while(!copy.empty()) {
@@ -369,12 +372,12 @@ namespace crimson {
     // when i is negative?
     static inline index_t parent(index_t i) {
       assert(0 != i);
-      return (i - 1) / 2;
+      return (i - 1) / K;
     }
 
-    static inline index_t lhs(index_t i) { return 2*i + 1; }
+    static inline index_t lhs(index_t i) { return K*i + 1; }
 
-    static inline index_t rhs(index_t i) { return 2*i + 2; }
+    static inline index_t rhs(index_t i) { return K*i + K; }
 
     void sift_up(index_t i) {
       while (i > 0) {
@@ -393,30 +396,29 @@ namespace crimson {
     void sift_down(index_t i) {
       while (i < count) {
 	index_t li = lhs(i);
-	index_t ri = rhs(i);
 
 	if (li < count) {
-	  if (comparator(*data[li], *data[i])) {
-	    if (ri < count && comparator(*data[ri], *data[li])) {
-	      std::swap(data[i], data[ri]);
-	      intru_data_of(data[i]) = i;
-	      intru_data_of(data[ri]) = ri;
-	      i = ri;
-	    } else {
-	      std::swap(data[i], data[li]);
-	      intru_data_of(data[i]) = i;
-	      intru_data_of(data[li]) = li;
-	      i = li;
+	  index_t ri = std::min(rhs(i), count - 1);
+
+	  // find the index of min. child
+	  index_t min_i = li;
+	  for (index_t k = li + 1; k <= ri; ++k) {
+	    if (comparator(*data[k], *data[min_i])) {
+	      min_i = k;
 	    }
-	  } else if (ri < count && comparator(*data[ri], *data[i])) {
-	    std::swap(data[i], data[ri]);
+	  }
+
+	  if (comparator(*data[min_i], *data[i])) {
+	    std::swap(data[i], data[min_i]);
 	    intru_data_of(data[i]) = i;
-	    intru_data_of(data[ri]) = ri;
-	    i = ri;
+	    intru_data_of(data[min_i]) = min_i;
+	    i = min_i;
 	  } else {
+	    // no child is smaller
 	    break;
 	  }
 	} else {
+	  // no children
 	  break;
 	}
       }

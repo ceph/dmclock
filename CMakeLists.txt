@@ -17,6 +17,14 @@ if(PROFILE)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DPROFILE")
 endif()
 
+if(K_WAY_HEAP)
+  if(K_WAY_HEAP GREATER 0)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DK_WAY_HEAP=${K_WAY_HEAP}")
+  else()
+    message(WARNING "K_WAY_HEAP value should be greater than 0")
+  endif()
+endif()
+
 add_subdirectory(src)
 add_subdirectory(sim)
 
