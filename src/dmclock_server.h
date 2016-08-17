@@ -202,7 +202,8 @@ namespace crimson {
     template<typename C, typename R>
     class PriorityQueueBase {
       FRIEND_TEST(dmclock_server, client_idle_erase);
-
+      FRIEND_TEST(dmclock_server, client_idle_activation);
+      
     public:
 
       using RequestRef = std::unique_ptr<R>;
@@ -221,6 +222,7 @@ namespace crimson {
 
       class ClientReq {
 	friend PriorityQueueBase;
+	FRIEND_TEST(dmclock_server, client_idle_activation);
 
 	RequestTag tag;
 	C          client_id;
@@ -247,6 +249,7 @@ namespace crimson {
 
       class ClientRec {
 	friend PriorityQueueBase<C,R>;
+	FRIEND_TEST(dmclock_server, client_idle_activation);
 
 	C                     client;
 	RequestTag            prev_tag;
@@ -383,8 +386,14 @@ namespace crimson {
 	friend std::ostream&
 	operator<<(std::ostream& out,
 		   const typename PriorityQueueBase<C,R>::ClientRec& e) {
-	  out << "{ client:" << e.client << " top req: " <<
-	    (e.has_request() ? e.next_request() : "none") << " }";
+	  out << "{ client:" << e.client << " top req: ";
+	  if(e.has_request()) {
+	    out << e.next_request();
+	  } else {  
+	    out << "none";
+	  }
+	  out << " prop_delta: " << e.prop_delta <<
+	      " idle: " << e.idle << " }";;
 	  return out;
 	}
       }; // class ClientRec
@@ -539,6 +548,10 @@ namespace crimson {
 	       bool use_prop_delta>
       struct ClientCompare {
 	bool operator()(const ClientRec& n1, const ClientRec& n2) const {
+	  if (n1.idle != n2.idle) {
+	    return n1.idle ? false :true;
+	  }
+
 	  if (n1.has_request()) {
 	    if (n2.has_request()) {
 	      const auto& t1 = n1.next_request().tag;
@@ -702,41 +715,18 @@ namespace crimson {
 	  // drifted from real-time. Either use the lowest existing
 	  // proportion tag -- O(1) -- or the client with the lowest
 	  // previous proportion tag -- O(n) where n = # clients.
-	  //
-	  // So we don't have to maintain a propotional queue that
-	  // keeps the minimum on proportional tag alone (we're
-	  // instead using a ready queue), we'll have to check each
-	  // client.
-	  //
-	  // The alternative would be to maintain a proportional queue
-	  // (define USE_PROP_TAG) and do an O(1) operation here.
 
-	  // Was unable to confirm whether equality testing on
-	  // std::numeric_limits<double>::max() is guaranteed, so
-	  // we'll use a compile-time calculated trigger that is one
-	  // third the max, which should be much larger than any
-	  // expected organic value.
-	  constexpr double lowest_prop_tag_trigger =
-	    std::numeric_limits<double>::max() / 3.0;
-
-	  double lowest_prop_tag = std::numeric_limits<double>::max();
-	  for (auto const &c : client_map) {
-	    // don't use ourselves (or anything else that might be
-	    // listed as idle) since we're now in the map
-	    if (!c.second->idle) {
-	      // use either lowest proportion tag or previous proportion tag
-	      if (c.second->has_request()) {
-		double p = c.second->next_request().tag.proportion +
-		  c.second->prop_delta;
-		if (p < lowest_prop_tag) {
-		  lowest_prop_tag = p;
-		}
-	      }
+	  auto prop_f = [](const ClientRec& top) -> double {
+	    if (!top.idle && top.has_request()) {
+	      return top.next_request().tag.proportion + top.prop_delta;
 	    }
-	  }
+	    return NaN;
+	  };
 
-	  // if this conditional does not fire, it 
-	  if (lowest_prop_tag < lowest_prop_tag_trigger) {
+	  double lowest_prop_tag = fmin(prop_f(ready_heap.top()),
+					prop_f(limit_heap.top()));
+	  
+	  if (!std::isnan(lowest_prop_tag)) {
 	    client.prop_delta = lowest_prop_tag - time;
 	  }
 	  client.idle = false;
