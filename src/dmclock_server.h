@@ -111,6 +111,8 @@ namespace crimson {
       double proportion;
       double limit;
       bool   ready; // true when within limit
+      uint32_t delta;
+      uint32_t rho;
 #ifndef DO_NOT_DELAY_TAG_CALC
       Time   arrival;
 #endif
@@ -135,7 +137,9 @@ namespace crimson {
 		       client.limit_inv,
 		       req_params.delta,
 		       false)),
-	ready(false)
+	ready(false),
+	delta(req_params.delta),
+	rho(req_params.rho)
 #ifndef DO_NOT_DELAY_TAG_CALC
 	, arrival(time)
 #endif
@@ -143,11 +147,18 @@ namespace crimson {
 	assert(reservation < max_tag || proportion < max_tag);
       }
 
-      RequestTag(double _res, double _prop, double _lim, const Time& _arrival) :
+      RequestTag(double _res,
+	         double _prop,
+		 double _lim,
+		 uint32_t _delta,
+		 uint32_t _rho,
+		 const Time& _arrival) :
 	reservation(_res),
 	proportion(_prop),
 	limit(_lim),
-	ready(false)
+	ready(false),
+	delta(_delta),
+	rho(_rho)
 #ifndef DO_NOT_DELAY_TAG_CALC
 	, arrival(_arrival)
 #endif
@@ -159,7 +170,9 @@ namespace crimson {
 	reservation(other.reservation),
 	proportion(other.proportion),
 	limit(other.limit),
-	ready(other.ready)
+	ready(other.ready),
+	delta(other.delta),
+	rho(other.rho)
 #ifndef DO_NOT_DELAY_TAG_CALC
 	, arrival(other.arrival)
 #endif
@@ -211,6 +224,8 @@ namespace crimson {
 	  " r:" << format_tag(tag.reservation) <<
 	  " p:" << format_tag(tag.proportion) <<
 	  " l:" << format_tag(tag.limit) <<
+	  " delta:" << tag.delta <<
+	  " rho:" << tag.rho <<
 #if 0 // try to resolve this to make sure Time is operator<<'able.
 #ifndef DO_NOT_DELAY_TAG_CALC
 	  " arrival:" << tag.arrival <<
@@ -282,6 +297,7 @@ namespace crimson {
 	C                     client;
 	RequestTag            prev_tag;
 	std::deque<ClientReq> requests;
+	uint32_t              popped_req_rho;
 
 	// amount added from the proportion tag as a result of
 	// an idle client becoming unidle
@@ -306,7 +322,8 @@ namespace crimson {
 		  const ClientInfo& _info,
 		  Counter current_tick) :
 	  client(_client),
-	  prev_tag(0.0, 0.0, 0.0, TimeZero),
+	  prev_tag(0.0, 0.0, 0.0, 1, 1, TimeZero),
+	  popped_req_rho(1),
 	  info(_info),
 	  idle(true),
 	  last_tick(current_tick),
@@ -332,6 +349,14 @@ namespace crimson {
 	  assign_unpinned_tag(prev_tag.limit, _prev.limit);
 	  assign_unpinned_tag(prev_tag.proportion, _prev.proportion);
 	  last_tick = _tick;
+	}
+
+	inline uint32_t get_popped_req_rho() const {
+	  return popped_req_rho;
+	}
+
+	inline void set_popped_req_rho(uint32_t rho) {
+	  popped_req_rho = rho;
 	}
 
 	inline void add_request(const RequestTag& tag,
@@ -819,7 +844,7 @@ namespace crimson {
 	} // if this client was idle
 
 #ifndef DO_NOT_DELAY_TAG_CALC
-	RequestTag tag(0, 0, 0, time);
+	RequestTag tag(0, 0, 0, 1, 1, time);
 
 	if (!client.has_request()) {
 	  tag = RequestTag(client.get_req_tag(), client.info,
@@ -873,6 +898,10 @@ namespace crimson {
 	// pop request and adjust heaps
 	top.pop_request();
 
+	// store popped request's rho to handle reducing reservation
+	// tags process when weight-based scheduling case
+	top.set_popped_req_rho(first.tag.rho);
+
 #ifndef DO_NOT_DELAY_TAG_CALC
 	if (top.has_request()) {
 	  ClientReq& next_first = top.next_request();
@@ -900,7 +929,7 @@ namespace crimson {
       // data_mtx should be held when called
       void reduce_reservation_tags(ClientRec& client) {
 	for (auto& r : client.requests) {
-	  r.tag.reservation -= client.info.reservation_inv;
+	  r.tag.reservation -= (client.get_popped_req_rho() * client.info.reservation_inv);
 
 #ifndef DO_NOT_DELAY_TAG_CALC
 	  // reduce only for front tag. because next tags' value are invalid
@@ -908,7 +937,7 @@ namespace crimson {
 #endif
 	}
 	// don't forget to update previous tag
-	client.prev_tag.reservation -= client.info.reservation_inv;
+	client.prev_tag.reservation -= (client.get_popped_req_rho() * client.info.reservation_inv);
 	resv_heap.promote(client);
       }
 
