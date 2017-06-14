@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 2.8.11)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/modules")
 
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wno-write-strings -Wall -pthread")
+
+if(DO_NOT_DELAY_TAG_CALC)
+  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDO_NOT_DELAY_TAG_CALC")
+endif()
+
 if (NOT(TARGET gtest AND TARGET gtest_main))
   if(NOT(GTEST_FOUND))
     find_package(GTest REQUIRED)
