@@ -104,7 +104,7 @@ namespace crimson {
       };
       auto server_ready_f = [] () -> bool { return true; };
       auto submit_req_f = [] (const ClientId& c,
-			      std::unique_ptr<Request> req,
+			      Request req,
 			      dmc::PhaseType phase) {
 	// empty; do nothing
       };
@@ -150,9 +150,8 @@ namespace crimson {
 	    "client map initially has size 0";
 	});
 
-      Request req;
       dmc::ReqParams req_params(1, 1);
-      pq.add_request_time(req, client, req_params, dmc::get_time());
+      pq.add_request_time(Request{}, client, req_params, dmc::get_time());
 
       std::this_thread::sleep_for(std::chrono::seconds(1));
 
@@ -247,7 +246,6 @@ namespace crimson {
 
       using ClientId = int;
       using Queue = dmc::PullPriorityQueue<ClientId,MyReq>;
-      using MyReqRef = typename Queue::RequestRef;
 
       ClientId client1 = 17;
       ClientId client2 = 98;
@@ -278,15 +276,15 @@ namespace crimson {
       EXPECT_EQ(2u, pq.client_count());
       EXPECT_EQ(9u, pq.request_count());
 
-      pq.remove_by_req_filter([](MyReqRef&& r) -> bool {return 1 == r->id % 2;});
+      pq.remove_by_req_filter([](MyReq&& r) -> bool {return 1 == r.id % 2;});
 
       EXPECT_EQ(5u, pq.request_count());
 
       std::list<MyReq> capture;
       pq.remove_by_req_filter(
-	[&capture] (MyReqRef&& r) -> bool {
-	  if (0 == r->id % 2) {
-	    capture.push_front(*r);
+	[&capture] (MyReq&& r) -> bool {
+	  if (0 == r.id % 2) {
+	    capture.push_front(std::move(r));
 	    return true;
 	  } else {
 	    return false;
@@ -317,7 +315,6 @@ namespace crimson {
 
       using ClientId = int;
       using Queue = dmc::PullPriorityQueue<ClientId,MyReq>;
-      using MyReqRef = typename Queue::RequestRef;
 
       ClientId client1 = 17;
 
@@ -348,9 +345,9 @@ namespace crimson {
 
       std::vector<MyReq> capture;
       pq.remove_by_req_filter(
-	[&capture] (MyReqRef&& r) -> bool {
-	  if (1 == r->id % 2) {
-	    capture.push_back(*r);
+	[&capture] (MyReq&& r) -> bool {
+	  if (1 == r.id % 2) {
+	    capture.push_back(std::move(r));
 	    return true;
 	  } else {
 	    return false;
@@ -369,9 +366,9 @@ namespace crimson {
 
       std::vector<MyReq> capture2;
       pq.remove_by_req_filter(
-	[&capture2] (MyReqRef&& r) -> bool {
-	  if (0 == r->id % 2) {
-	    capture2.insert(capture2.begin(), *r);
+	[&capture2] (MyReq&& r) -> bool {
+	  if (0 == r.id % 2) {
+	    capture2.insert(capture2.begin(), std::move(r));
 	    return true;
 	  } else {
 	    return false;
@@ -400,7 +397,6 @@ namespace crimson {
 
       using ClientId = int;
       using Queue = dmc::PullPriorityQueue<ClientId,MyReq>;
-      using MyReqRef = typename Queue::RequestRef;
 
       ClientId client1 = 17;
 
@@ -431,9 +427,9 @@ namespace crimson {
 
       std::vector<MyReq> capture;
       pq.remove_by_req_filter(
-	[&capture] (MyReqRef&& r) -> bool {
-	  if (1 == r->id % 2) {
-	    capture.insert(capture.begin(), *r);
+	[&capture] (MyReq&& r) -> bool {
+	  if (1 == r.id % 2) {
+	    capture.insert(capture.begin(), std::move(r));
 	    return true;
 	  } else {
 	    return false;
@@ -451,9 +447,9 @@ namespace crimson {
 
       std::vector<MyReq> capture2;
       pq.remove_by_req_filter(
-	[&capture2] (MyReqRef&& r) -> bool {
-	  if (0 == r->id % 2) {
-	    capture2.push_back(*r);
+	[&capture2] (MyReq&& r) -> bool {
+	  if (0 == r.id % 2) {
+	    capture2.push_back(std::move(r));
 	    return true;
 	  } else {
 	    return false;
@@ -482,7 +478,6 @@ namespace crimson {
 
       using ClientId = int;
       using Queue = dmc::PullPriorityQueue<ClientId,MyReq>;
-      using MyReqRef = typename Queue::RequestRef;
 
       ClientId client1 = 17;
       ClientId client2 = 98;
@@ -517,8 +512,8 @@ namespace crimson {
 
       pq.remove_by_client(client1,
 			  true,
-			  [&removed] (MyReqRef&& r) {
-			    removed.push_front(*r);
+			  [&removed] (MyReq&& r) {
+			    removed.push_front(std::move(r));
 			  });
 
       EXPECT_EQ(3u, removed.size());
@@ -533,11 +528,11 @@ namespace crimson {
 
       Queue::PullReq pr = pq.pull_request();
       EXPECT_TRUE(pr.is_retn());
-      EXPECT_EQ(2, pr.get_retn().request->id);
+      EXPECT_EQ(2, pr.get_retn().request.id);
 
       pr = pq.pull_request();
       EXPECT_TRUE(pr.is_retn());
-      EXPECT_EQ(0, pr.get_retn().request->id);
+      EXPECT_EQ(0, pr.get_retn().request.id);
 
       pq.remove_by_client(client2);
       EXPECT_EQ(0u, pq.request_count()) <<

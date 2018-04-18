@@ -244,10 +244,6 @@ namespace crimson {
       // we don't want to include gtest.h just for FRIEND_TEST
       friend class dmclock_server_client_idle_erase_Test;
 
-    public:
-
-      using RequestRef = std::unique_ptr<R>;
-
     protected:
 
       using TimePoint = decltype(std::chrono::steady_clock::now());
@@ -265,13 +261,13 @@ namespace crimson {
 
 	RequestTag tag;
 	C          client_id;
-	RequestRef request;
+	R          request;
 
       public:
 
 	ClientReq(const RequestTag& _tag,
 		  const C&          _client_id,
-		  RequestRef&&      _request) :
+		  R&&               _request) :
 	  tag(_tag),
 	  client_id(_client_id),
 	  request(std::move(_request))
@@ -353,7 +349,7 @@ namespace crimson {
 
 	inline void add_request(const RequestTag& tag,
 				const C&          client_id,
-				RequestRef&&      request) {
+				R&&               request) {
 	  requests.emplace_back(ClientReq(tag, client_id, std::move(request)));
 	}
 
@@ -379,7 +375,7 @@ namespace crimson {
 
 	// NB: because a deque is the underlying structure, this
 	// operation might be expensive
-	bool remove_by_req_filter_fw(std::function<bool(RequestRef&&)> filter_accum) {
+	bool remove_by_req_filter_fw(std::function<bool(R&&)> filter_accum) {
 	  bool any_removed = false;
 	  for (auto i = requests.begin();
 	       i != requests.end();
@@ -396,7 +392,7 @@ namespace crimson {
 
 	// NB: because a deque is the underlying structure, this
 	// operation might be expensive
-	bool remove_by_req_filter_bw(std::function<bool(RequestRef&&)> filter_accum) {
+	bool remove_by_req_filter_bw(std::function<bool(R&&)> filter_accum) {
 	  bool any_removed = false;
 	  for (auto i = requests.rbegin();
 	       i != requests.rend();
@@ -412,7 +408,7 @@ namespace crimson {
 	}
 
 	inline bool
-	remove_by_req_filter(std::function<bool(RequestRef&&)> filter_accum,
+	remove_by_req_filter(std::function<bool(R&&)> filter_accum,
 			     bool visit_backwards) {
 	  if (visit_backwards) {
 	    return remove_by_req_filter_bw(filter_accum);
@@ -506,7 +502,7 @@ namespace crimson {
       }
 
 
-      bool remove_by_req_filter(std::function<bool(RequestRef&&)> filter_accum,
+      bool remove_by_req_filter(std::function<bool(R&&)> filter_accum,
 				bool visit_backwards = false) {
 	bool any_removed = false;
 	DataGuard g(data_mtx);
@@ -528,14 +524,14 @@ namespace crimson {
 
 
       // use as a default value when no accumulator is provide
-      static void request_sink(RequestRef&& req) {
+      static void request_sink(R&& req) {
 	// do nothing
       }
 
 
       void remove_by_client(const C& client,
 			    bool reverse = false,
-			    std::function<void (RequestRef&&)> accum = request_sink) {
+			    std::function<void (R&&)> accum = request_sink) {
 	DataGuard g(data_mtx);
 
 	auto i = client_map.find(client);
@@ -804,7 +800,7 @@ namespace crimson {
 
 
       // data_mtx must be held by caller
-      void do_add_request(RequestRef&& request,
+      void do_add_request(R&& request,
 			  const C& client_id,
 			  const ReqParams& req_params,
 			  const Time time,
@@ -945,11 +941,11 @@ namespace crimson {
       template<typename C1, IndIntruHeapData ClientRec::*C2, typename C3>
       void pop_process_request(IndIntruHeap<C1, ClientRec, C2, C3, B>& heap,
 			       std::function<void(const C& client,
-						  RequestRef& request)> process) {
+						  R& request)> process) {
 	// gain access to data
 	ClientRec& top = heap.top();
 
-	RequestRef request = std::move(top.next_request().request);
+	R request = std::move(top.next_request().request);
 #ifndef DO_NOT_DELAY_TAG_CALC
 	RequestTag tag = top.next_request().tag;
 #endif
@@ -1171,13 +1167,13 @@ namespace crimson {
       // When a request is pulled, this is the return type.
       struct PullReq {
 	struct Retn {
-	  C                           client;
-	  typename super::RequestRef  request;
-	  PhaseType                   phase;
+	  C         client;
+	  R         request;
+	  PhaseType phase;
 	};
 
 	typename super::NextReqType   type;
-	boost::variant<Retn,Time>     data;
+	boost::variant<Time,Retn>     data;
 
 	bool is_none() const { return type == super::NextReqType::none; }
 
@@ -1230,7 +1226,7 @@ namespace crimson {
 			      const C& client_id,
 			      const ReqParams& req_params,
 			      double addl_cost = 0.0) {
-	add_request(typename super::RequestRef(new R(std::move(request))),
+	add_request(std::move(request),
 		    client_id,
 		    req_params,
 		    get_time(),
@@ -1242,7 +1238,7 @@ namespace crimson {
 			      const C& client_id,
 			      double addl_cost = 0.0) {
 	static const ReqParams null_req_params;
-	add_request(typename super::RequestRef(new R(std::move(request))),
+	add_request(std::move(request),
 		    client_id,
 		    null_req_params,
 		    get_time(),
@@ -1256,7 +1252,7 @@ namespace crimson {
 				   const ReqParams& req_params,
 				   const Time time,
 				   double addl_cost = 0.0) {
-	add_request(typename super::RequestRef(new R(std::move(request))),
+	add_request(std::move(request),
 		    client_id,
 		    req_params,
 		    time,
@@ -1264,28 +1260,12 @@ namespace crimson {
       }
 
 
-      inline void add_request(typename super::RequestRef&& request,
-			      const C& client_id,
-			      const ReqParams& req_params,
-			      double addl_cost = 0.0) {
-	add_request(request, req_params, client_id, get_time(), addl_cost);
-      }
-
-
-      inline void add_request(typename super::RequestRef&& request,
-			      const C& client_id,
-			      double addl_cost = 0.0) {
-	static const ReqParams null_req_params;
-	add_request(request, null_req_params, client_id, get_time(), addl_cost);
-      }
-
-
       // this does the work; the versions above provide alternate interfaces
-      void add_request(typename super::RequestRef&& request,
-		       const C&                     client_id,
-		       const ReqParams&             req_params,
-		       const Time                   time,
-		       double                       addl_cost = 0.0) {
+      void add_request(R&&              request,
+		       const C&         client_id,
+		       const ReqParams& req_params,
+		       const Time       time,
+		       double           addl_cost = 0.0) {
 	typename super::DataGuard g(this->data_mtx);
 #ifdef PROFILE
 	add_request_timer.start();
@@ -1333,10 +1313,8 @@ namespace crimson {
 
 	auto process_f =
 	  [&] (PullReq& pull_result, PhaseType phase) ->
-	  std::function<void(const C&,
-			     typename super::RequestRef&)> {
-	  return [&pull_result, phase](const C& client,
-				       typename super::RequestRef& request) {
+	  std::function<void(const C&, R&)> {
+	  return [&pull_result, phase](const C& client, R& request) {
 	    pull_result.data =
 	    typename PullReq::Retn{client, std::move(request), phase};
 	  };
@@ -1395,8 +1373,7 @@ namespace crimson {
 
       // a function to submit a request to the server; the second
       // parameter is a callback when it's completed
-      using HandleRequestFunc =
-	std::function<void(const C&,typename super::RequestRef,PhaseType)>;
+      using HandleRequestFunc = std::function<void(const C&, R, PhaseType)>;
 
     protected:
 
@@ -1471,7 +1448,7 @@ namespace crimson {
 			      const C& client_id,
 			      const ReqParams& req_params,
 			      double addl_cost = 0.0) {
-	add_request(typename super::RequestRef(new R(std::move(request))),
+	add_request(std::move(request),
 		    client_id,
 		    req_params,
 		    get_time(),
@@ -1479,20 +1456,12 @@ namespace crimson {
       }
 
 
-      inline void add_request(typename super::RequestRef&& request,
-			      const C& client_id,
-			      const ReqParams& req_params,
-			      double addl_cost = 0.0) {
-	add_request(request, req_params, client_id, get_time(), addl_cost);
-      }
-
-
-      inline void add_request_time(const R& request,
+      inline void add_request_time(R&& request,
 				   const C& client_id,
 				   const ReqParams& req_params,
 				   const Time time,
 				   double addl_cost = 0.0) {
-	add_request(typename super::RequestRef(new R(request)),
+	add_request(std::move(request),
 		    client_id,
 		    req_params,
 		    time,
@@ -1500,7 +1469,7 @@ namespace crimson {
       }
 
 
-      void add_request(typename super::RequestRef&& request,
+      void add_request(R&& request,
 		       const C& client_id,
 		       const ReqParams& req_params,
 		       const Time time,
@@ -1553,8 +1522,7 @@ namespace crimson {
 	C client_result;
 	super::pop_process_request(heap,
 				   [this, phase, &client_result]
-				   (const C& client,
-				    typename super::RequestRef& request) {
+				   (const C& client, R& request) {
 				     client_result = client;
 				     handle_f(client, std::move(request), phase);
 				   });
