@@ -1,6 +1,6 @@
 # dmclock
 
-This repository contains C++ 11 code that implements the dmclock
+This repository contains C++ 17 code that implements the dmclock
 distributed quality of service algorithm. See __mClock: Handling
 Throughput Variability for Hypervisor IO Scheduling__ by Gulati,
 Merchant, and Varman for a description of the algorithm.

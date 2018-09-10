@@ -19,8 +19,7 @@
 #include <mutex>
 #include <deque>
 #include <functional>
-
-#include "boost/variant.hpp"
+#include <variant>
 
 #include "ssched_recs.h"
 
@@ -55,8 +54,8 @@ namespace crimson {
 	  RequestRef  request;
 	};
 
-	Type                 type;
-	boost::variant<Retn> data;
+	Type               type;
+	std::variant<Retn> data;
       };
 
     protected:

@@ -9,6 +9,4 @@ target_include_directories(dmclock PUBLIC
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/support/src>)
 
-target_link_libraries(dmclock
-  PUBLIC Boost::boost
-  PRIVATE Threads::Threads)
+target_link_libraries(dmclock PRIVATE Threads::Threads)
