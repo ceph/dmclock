@@ -38,8 +38,7 @@
 #include <iostream>
 #include <sstream>
 #include <limits>
-
-#include <boost/variant.hpp>
+#include <variant>
 
 #include "indirect_intrusive_heap.h"
 #include "run_every.h"
@@ -84,7 +83,7 @@ namespace crimson {
 
     // the AtLimit constructor parameter can either accept AtLimit or a value
     // for RejectThreshold (which implies AtLimit::Reject)
-    using AtLimitParam = boost::variant<AtLimit, RejectThreshold>;
+    using AtLimitParam = std::variant<AtLimit, RejectThreshold>;
 
     struct ClientInfo {
       double reservation;  // minimum
@@ -815,8 +814,8 @@ namespace crimson {
       // given type T, or a default value of T otherwise
       template <typename T, typename Variant>
       static T get_or_default(const Variant& param, T default_value) {
-	const T *p = boost::get<T>(&param);
-	return p ? *p : default_value;
+        const T *p = std::get_if<T>(&param);
+        return p ? *p : default_value;
       }
 
       // COMMON constructor that others feed into; we can accept three
@@ -1264,17 +1263,17 @@ namespace crimson {
 	};
 
 	typename super::NextReqType   type;
-	boost::variant<Retn,Time>     data;
+	std::variant<Retn,Time>     data;
 
 	bool is_none() const { return type == super::NextReqType::none; }
 
 	bool is_retn() const { return type == super::NextReqType::returning; }
 	Retn& get_retn() {
-	  return boost::get<Retn>(data);
+	  return std::get<Retn>(data);
 	}
 
 	bool is_future() const { return type == super::NextReqType::future; }
-	Time getTime() const { return boost::get<Time>(data); }
+	Time getTime() const { return std::get<Time>(data); }
       };
 
 
@@ -1445,7 +1444,7 @@ namespace crimson {
 	    auto tag = super::pop_process_request(this->ready_heap,
 				     process_f(result, PhaseType::priority));
 	    // need to use retn temporarily
-	    auto& retn = boost::get<typename PullReq::Retn>(result.data);
+	    auto& retn = std::get<typename PullReq::Retn>(result.data);
 	    super::reduce_reservation_tags(retn.client, tag);
 	  }
 	  ++this->prop_sched_count;
