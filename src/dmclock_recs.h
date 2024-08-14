@@ -18,6 +18,7 @@
 
 #include <ostream>
 #include <assert.h>
+#include <cstdint>
 
 
 namespace crimson {
