@@ -23,7 +23,7 @@
 #include <limits>
 #include <cmath>
 #include <chrono>
-
+#include <string>
 
 namespace crimson {
   namespace dmclock {
