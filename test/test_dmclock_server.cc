@@ -1518,5 +1518,199 @@ namespace crimson {
       EXPECT_EQ(47u, pq->request_count());
     } // dmclock_server_pull.pull_wait_at_limit
 
+    TEST(dmclock_server_pull_multiq, pull_reservation_demo_immtag_incorrect) {
+      // This test using the immediate tag calculation demonstrates the case
+      // where a single client interacts with multiple mClock queues. The
+      // multiple mClock queues are configued with the same server id.
+      // Since the mClock queues are independent, the tag calculations are
+      // also independent and this results in inaccurate QoS provided to
+      // the client as the test shows.
+      using ClientId = int;
+      using Queue = dmc::PullPriorityQueue<ClientId,Request>;
+      using QueueRef = std::unique_ptr<Queue>;
+
+      ClientId client1 = 52;
+
+      dmc::ClientInfo info1(3.0, 1.0, 3.0);
+
+      auto client_info_f = [&] (ClientId c) -> const dmc::ClientInfo* {
+        if (client1 == c) return &info1;
+        else {
+          ADD_FAILURE() << "client info looked up for non-existent client";
+          return nullptr;
+        }
+      };
+
+      QueueRef pq1(new Queue(client_info_f, AtLimit::Wait));
+      QueueRef pq2(new Queue(client_info_f, AtLimit::Wait));
+
+      ReqParams req_params(0, 0);
+
+      // make sure all times are well before now
+      auto start_time = dmc::get_time() - 100.0;
+
+      // enqueue 8 requests from client1 distributed
+      // equally across pq1 and pq2.
+      for (int i = 0; i < 4; ++i) {
+        EXPECT_EQ(0, pq1->add_request_time(Request{}, client1,
+                                           req_params, start_time));
+        EXPECT_EQ(0, pq2->add_request_time(Request{}, client1,
+                                           req_params, start_time));
+        start_time += 0.001;
+      }
+
+      int c1_count = 0;
+      // Perform dequeue operation on pq1 & pq2 in a 1 second
+      // span. Ideally, according to the reservation and limit
+      // setting, only 3 requests should be pulled across the
+      // queues. But the following sequence demonstrates that
+      // double the requests (i.e., 6) are actually dequeued.
+      for (double t = 0.0; t <= 0.7; t += 0.35) {
+        Queue::PullReq pr1 = pq1->pull_request(start_time + t);
+        EXPECT_EQ(Queue::NextReqType::returning, pr1.type);
+        auto& retn1 = boost::get<Queue::PullReq::Retn>(pr1.data);
+        EXPECT_EQ(PhaseType::reservation, retn1.phase);
+        if (client1 == retn1.client) ++c1_count;
+          else ADD_FAILURE() << "got request from no clients";
+
+        // Perform dequeue operation on pq2
+        Queue::PullReq pr2 = pq2->pull_request(start_time + t);
+        EXPECT_EQ(Queue::NextReqType::returning, pr2.type);
+        auto& retn2 = boost::get<Queue::PullReq::Retn>(pr2.data);
+        EXPECT_EQ(PhaseType::reservation, retn2.phase);
+        if (client1 == retn2.client) ++c1_count;
+          else ADD_FAILURE() << "got request from no clients";
+      }
+
+      // The number of dequeued items should actually be 3 considering
+      // the QoS parameters of reservation & limit!
+      EXPECT_EQ(6, c1_count) <<
+        "3/4th of the client1 requests should be from pq1 & pq2";
+
+      // Dequeueing the last item before reservation is restored
+      // should fail with a future work item on both queues
+      Queue::PullReq pr1 = pq1->pull_request(start_time + 0.98);
+      EXPECT_EQ(Queue::NextReqType::future, pr1.type) <<
+        "shouldn't be able to pull requests until reservation is restored";
+      Queue::PullReq pr2 = pq2->pull_request(start_time + 0.98);
+      EXPECT_EQ(Queue::NextReqType::future, pr2.type) <<
+        "shouldn't be able to pull requests until reservation is restored";
+
+      // Dequeue the last item from both queues after reservation is restored
+      pr1 = pq1->pull_request(start_time + 1.0);
+      EXPECT_EQ(Queue::NextReqType::returning, pr1.type);
+      auto& retn1 = boost::get<Queue::PullReq::Retn>(pr1.data);
+      EXPECT_EQ(PhaseType::reservation, retn1.phase);
+      if (client1 == retn1.client) ++c1_count;
+        else ADD_FAILURE() << "got request from no clients";
+
+      pr2 = pq2->pull_request(start_time + 1.0);
+      EXPECT_EQ(Queue::NextReqType::returning, pr2.type);
+      auto& retn2 = boost::get<Queue::PullReq::Retn>(pr2.data);
+      EXPECT_EQ(PhaseType::reservation, retn2.phase);
+      if (client1 == retn2.client) ++c1_count;
+        else ADD_FAILURE() << "got request from no clients";
+
+      EXPECT_EQ(8, c1_count) <<
+        "all client1 requests should be dequeued";
+    } // dmclock_server_pull_multiq.pull_reservation_demo_immtag_incorrect
+
+    TEST(dmclock_server_pull_multiq, pull_reservation_demo_delydtag_incorrect) {
+      // This test using the delayed tag calculation demonstrates the case
+      // where a single client interacts with multiple mClock queues. The
+      // multiple mClock queues are configued with the same server id.
+      // Since the mClock queues are independent, the tag calculations are
+      // also independent and this results in inaccurate QoS provided to
+      // the client as the test shows.
+      using ClientId = int;
+      using Queue = dmc::PullPriorityQueue<ClientId,Request,true>;
+      using QueueRef = std::unique_ptr<Queue>;
+
+      ClientId client1 = 52;
+
+      dmc::ClientInfo info1(3.0, 1.0, 3.0);
+
+      auto client_info_f = [&] (ClientId c) -> const dmc::ClientInfo* {
+        if (client1 == c) return &info1;
+        else {
+          ADD_FAILURE() << "client info looked up for non-existent client";
+          return nullptr;
+        }
+      };
+
+      QueueRef pq1(new Queue(client_info_f, AtLimit::Wait));
+      QueueRef pq2(new Queue(client_info_f, AtLimit::Wait));
+
+      ReqParams req_params(0, 0);
+
+      // make sure all times are well before now
+      auto start_time = dmc::get_time() - 100.0;
+
+      // enqueue 8 requests from client1 distributed
+      // equally across pq1 and pq2.
+      for (int i = 0; i < 4; ++i) {
+        EXPECT_EQ(0, pq1->add_request_time(Request{}, client1,
+                                           req_params, start_time));
+        EXPECT_EQ(0, pq2->add_request_time(Request{}, client1,
+                                           req_params, start_time));
+        start_time += 0.001;
+      }
+
+      int c1_count = 0;
+      // Perform dequeue operation on pq1 & pq2 in a 1 second
+      // span. Ideally, according to the reservation and limit
+      // setting, only 3 requests should be pulled across the
+      // queues. But the following sequence demonstrates that
+      // double the requests (i.e., 6) are actually dequeued.
+      for (double t = 0.0; t <= 0.7; t += 0.35) {
+        Queue::PullReq pr1 = pq1->pull_request(start_time + t);
+        EXPECT_EQ(Queue::NextReqType::returning, pr1.type);
+        auto& retn1 = boost::get<Queue::PullReq::Retn>(pr1.data);
+        EXPECT_EQ(PhaseType::reservation, retn1.phase);
+        if (client1 == retn1.client) ++c1_count;
+          else ADD_FAILURE() << "got request from no clients";
+
+        // Perform dequeue operation on pq2
+        Queue::PullReq pr2 = pq2->pull_request(start_time + t);
+        EXPECT_EQ(Queue::NextReqType::returning, pr2.type);
+        auto& retn2 = boost::get<Queue::PullReq::Retn>(pr2.data);
+        EXPECT_EQ(PhaseType::reservation, retn2.phase);
+        if (client1 == retn2.client) ++c1_count;
+          else ADD_FAILURE() << "got request from no clients";
+      }
+
+      // The number of dequeued items should actually be 3
+      // considering the QoS parameters of reservation & limit!
+      EXPECT_EQ(6, c1_count) <<
+        "3/4th of the client1 requests should be from pq1 & pq2";
+
+      // Dequeueing the last item before reservation is restored
+      // should fail with a future work item on both queues
+      Queue::PullReq pr1 = pq1->pull_request(start_time + 0.98);
+      EXPECT_EQ(Queue::NextReqType::future, pr1.type) <<
+        "shouldn't be able to pull requests until reservation is restored";
+      Queue::PullReq pr2 = pq2->pull_request(start_time + 0.98);
+      EXPECT_EQ(Queue::NextReqType::future, pr2.type) <<
+        "shouldn't be able to pull requests until reservation is restored";
+
+      // Dequeue the last item from both queues after reservation is restored
+      pr1 = pq1->pull_request(start_time + 1.0);
+      EXPECT_EQ(Queue::NextReqType::returning, pr1.type);
+      auto& retn1 = boost::get<Queue::PullReq::Retn>(pr1.data);
+      EXPECT_EQ(PhaseType::reservation, retn1.phase);
+      if (client1 == retn1.client) ++c1_count;
+        else ADD_FAILURE() << "got request from no clients";
+
+      pr2 = pq2->pull_request(start_time + 1.0);
+      EXPECT_EQ(Queue::NextReqType::returning, pr2.type);
+      auto& retn2 = boost::get<Queue::PullReq::Retn>(pr2.data);
+      EXPECT_EQ(PhaseType::reservation, retn2.phase);
+      if (client1 == retn2.client) ++c1_count;
+        else ADD_FAILURE() << "got request from no clients";
+
+      EXPECT_EQ(8, c1_count) <<
+        "all client1 requests should be dequeued";
+    } // dmclock_server_pull_multiq.pull_reservation_demo_delydtag_incorrect
+
   } // namespace dmclock
 } // namespace crimson
