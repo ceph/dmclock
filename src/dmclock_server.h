@@ -243,6 +243,11 @@ namespace crimson {
 	}
       }
 
+      bool is_valid() {
+        return (reservation != 0.0 && proportion != 0.0 && limit != 0.0 &&
+                cost != 0 && arrival != TimeZero);
+      }
+
     private:
 
       static double tag_calc(const Time time,
