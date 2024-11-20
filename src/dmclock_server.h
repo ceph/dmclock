@@ -280,6 +280,45 @@ namespace crimson {
       }
     }; // class RequestTag
 
+    struct ReqTagInfo {
+      // latest tag for a client - read/write
+      RequestTag last_tag = RequestTag(0.0, 0.0, 0.0, TimeZero);
+      // last tick interval - read only
+      Counter last_tick_interval = 0;
+
+      ReqTagInfo() = default;
+
+      ReqTagInfo(const RequestTag& _tag,
+                 const Counter _tick_interval) :
+        last_tag(_tag),
+        last_tick_interval(_tick_interval)
+      {
+        // empty
+      }
+
+      // called by the server to update its latest tag
+      inline void update_tag(const RequestTag& _tag) {
+        last_tag = RequestTag(_tag);
+      }
+
+      // called by dmClock clients to update the
+      // latest tick interval or in other words the
+      // total number of requests handled by other
+      // queues on this server before the current
+      // request on this queue.
+      inline void update_tick(const Counter _tick) {
+        last_tick_interval = _tick;
+      }
+
+      friend std::ostream& operator<<(std::ostream& out,
+                                      const ReqTagInfo& ti) {
+        out << "{ ReqTagInfo:: last_tag:" << ti.last_tag <<
+               " last_tick_interval:" << ti.last_tick_interval <<
+               " }";
+        return out;
+      }
+    }; // class ReqTagInfo
+
     // C is client identifier type, R is request type,
     // IsDelayed controls whether tag calculation is delayed until the request
     //   reaches the front of its queue. This is an optimization over the
