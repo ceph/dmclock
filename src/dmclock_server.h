@@ -338,6 +338,10 @@ namespace crimson {
       using DelayedTagCalc = std::true_type;
       using ImmediateTagCalc = std::false_type;
 
+      // default ReqTagInfo to help maintain the original semantics of
+      // tag calculations if dynamic tag info is not used.
+      ReqTagInfo default_tag_info = ReqTagInfo();
+
     public:
 
       using RequestRef = std::unique_ptr<R>;
@@ -420,6 +424,7 @@ namespace crimson {
       public:
 
 	const ClientInfo*     info;
+        const ReqTagInfo*     tag_info;
 	bool                  idle;
 	Counter               last_tick;
 	uint32_t              cur_rho;
@@ -427,10 +432,12 @@ namespace crimson {
 
 	ClientRec(C _client,
 		  const ClientInfo* _info,
+                  const ReqTagInfo* _tag_info,
 		  Counter current_tick) :
 	  client(_client),
 	  prev_tag(0.0, 0.0, 0.0, TimeZero),
 	  info(_info),
+          tag_info(_tag_info),
 	  idle(true),
 	  last_tick(current_tick),
 	  cur_rho(1),
@@ -972,23 +979,91 @@ namespace crimson {
 	return client.info;
       }
 
+      // data_mtx should be held when called
+      inline const ReqTagInfo* get_latest_tag_info(ClientRec& client) {
+        if (is_dynamic_tag_info_f) {
+          client.tag_info = reqtag_info_f(client.client);
+          if (client.tag_info->last_tag.arrival >= client.prev_tag.arrival) {
+            client.prev_tag = client.tag_info->last_tag;
+          }
+        }
+        return client.tag_info;
+      }
+
+      // data_mtx must be held by caller
+      inline void update_tag_info(const ClientRec& client,
+                                  const RequestTag& tag) {
+        if(is_dynamic_tag_info_f) {
+          reqtag_updt_f(client.client, tag);
+        }
+      }
+
+      // data_mtx must be held by caller
+      RequestTag calc_interval_tag(const ReqTagInfo& ti,
+                                   const ClientInfo& ci,
+                                   const ReqParams& params,
+                                   Time time,
+                                   Cost cost) {
+        RequestTag tag(0, 0, 0, time, 0, 0, cost);
+        Counter tick_interval = ti.last_tick_interval;
+        if (tick_interval) {
+          double tick_interval_inv = 1.0 / double(tick_interval);
+          // set up a new temporary client info by reducing
+          // the original parameters by a factor equal to the
+          // tick_interval. This accounts for requests handled
+          // by this server on other queues and effectively
+          // pushes the scheduling of this tag into the future.
+          ClientInfo ci_intvl = ClientInfo(ci.reservation * tick_interval_inv,
+                                           ci.weight * tick_interval_inv,
+                                           ci.limit * tick_interval_inv);
+
+          // Calculate the new tag
+          tag = RequestTag(ti.last_tag, ci_intvl, params,
+                           time, cost, anticipation_timeout);
+        }
+
+        return tag;
+      }
+
       // data_mtx must be held by caller
       RequestTag initial_tag(DelayedTagCalc delayed, ClientRec& client,
 			     const ReqParams& params, Time time, Cost cost) {
 	RequestTag tag(0, 0, 0, time, 0, 0, cost);
+        const ClientInfo* client_info = get_cli_info(client);
+        assert(client_info);
+        // get tag_info & set prev_tag to the latest tag for the client
+        const ReqTagInfo* tag_info = get_latest_tag_info(client);
+        assert(tag_info);
 
-	// only calculate a tag if the request is going straight to the front
-	if (!client.has_request()) {
-	  const ClientInfo* client_info = get_cli_info(client);
-	  assert(client_info);
-	  tag = RequestTag(client.get_req_tag(), *client_info,
-			   params, time, cost, anticipation_timeout);
+        if (!client.has_request() &&
+            tag_info->last_tag.arrival == TimeZero) {
+          // This section handles the following scenarios:
+          // - first ever request for this new client with dynamic
+          //   tag info enabled.
+          // - Preserve the original behavior without dynamic tag
+          //   info where the tag is only calculated if the request
+          //   is going straight to the front.
+          tag = RequestTag(client.get_req_tag(), *client_info,
+                           params, time, cost, anticipation_timeout);
+        } else {
+          // for all other cases where the client may or may not have
+          // requests, calculate the next tag only if the tick_interval
+          // is non-zero, which means that the previous request was
+          // handled on a different queue. Otherwise, the next tag is
+          // calculated as before later on as part of update_next_tag().
+          tag = calc_interval_tag(*tag_info, *client_info,
+                                  params, time, cost);
+        }
 
-	  // copy tag to previous tag for client
-	  client.update_req_tag(tag, tick);
-	}
-	return tag;
-      }
+        if (tag.is_valid()) {
+          // copy tag to previous tag for client
+          client.update_req_tag(tag, tick);
+          // Update the client request tag info
+          update_tag_info(client, tag);
+        }
+
+        return tag;
+    }
 
       // data_mtx must be held by caller
       RequestTag initial_tag(ImmediateTagCalc imm, ClientRec& client,
@@ -996,11 +1071,15 @@ namespace crimson {
 	// calculate the tag unconditionally
 	const ClientInfo* client_info = get_cli_info(client);
 	assert(client_info);
-	RequestTag tag(client.get_req_tag(), *client_info,
+        // set prev_tag to the latest tag for the client
+        // in case dynamic tag info is enabled.
+        get_latest_tag_info(client);
+        RequestTag tag(client.get_req_tag(), *client_info,
 		       params, time, cost, anticipation_timeout);
-
 	// copy tag to previous tag for client
 	client.update_req_tag(tag, tick);
+        // Update tag info using client specified function
+        update_tag_info(client, tag);
 	return tag;
       }
 
@@ -1019,7 +1098,9 @@ namespace crimson {
         if (insert.second) {
           // new client entry
 	  const ClientInfo* info = client_info_f(client_id);
-	  auto client_rec = std::make_shared<ClientRec>(client_id, info, tick);
+          const ReqTagInfo* tag_info = &default_tag_info;
+	  auto client_rec = std::make_shared<ClientRec>(client_id, info,
+                                                        tag_info, tick);
 	  resv_heap.push(client_rec);
 #if USE_PROP_HEAP
 	  prop_heap.push(client_rec);
@@ -1082,7 +1163,9 @@ namespace crimson {
 	  client.idle = false;
 	} // if this client was idle
 
-	RequestTag tag = initial_tag(TagCalc{}, client, req_params, time, cost);
+        // NOTE: The 'tag' here must point to the latest tag for the client
+        // in case multiple mclock queues (on the same Server) are in play.
+        RequestTag tag = initial_tag(TagCalc{}, client, req_params, time, cost);
 
 	if (at_limit == AtLimit::Reject &&
             tag.limit > time + reject_threshold) {
@@ -1121,6 +1204,11 @@ namespace crimson {
 	if (top.has_request()) {
 	  // perform delayed tag calculation on the next request
 	  ClientReq& next_first = top.next_request();
+          // skip updating the next tag if already calculated.
+          // Only applicable when dynamic tag info is enabled.
+          if (next_first.tag.is_valid()) {
+            return;
+          }
 	  const ClientInfo* client_info = get_cli_info(top);
 	  assert(client_info);
 	  next_first.tag = RequestTag(tag, *client_info,
@@ -1130,6 +1218,8 @@ namespace crimson {
 				      anticipation_timeout);
 	  // copy tag to previous tag for client
 	  top.update_req_tag(next_first.tag, tick);
+          // Update tag info using client specified function
+          update_tag_info(top, next_first.tag);
 	}
       }
 
