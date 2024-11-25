@@ -325,8 +325,9 @@ namespace crimson {
     //   originally published dmclock algorithm, allowing it to use the most
     //   recent values of rho and delta.
     // U1 determines whether to use client information function dynamically,
+    // U2 determines whether to use client tag information function dynamically
     // B is heap branching factor
-    template<typename C, typename R, bool IsDelayed, bool U1, unsigned B>
+    template<typename C, typename R, bool IsDelayed, bool U1, bool U2, unsigned B>
     class PriorityQueueBase {
       // we don't want to include gtest.h just for FRIEND_TEST
       friend class dmclock_server_client_idle_erase_Test;
@@ -399,7 +400,7 @@ namespace crimson {
       // ClientRec could be "protected" with no issue. [See comments
       // associated with function submit_top_request.]
       class ClientRec {
-	friend PriorityQueueBase<C,R,IsDelayed,U1,B>;
+	friend PriorityQueueBase<C,R,IsDelayed,U1,U2,B>;
 
 	C                     client;
 	RequestTag            prev_tag;
@@ -587,6 +588,12 @@ namespace crimson {
       // a function that can be called to look up client information
       using ClientInfoFunc = std::function<const ClientInfo*(const C&)>;
 
+      // a function that can be called to look up client tag information
+      using ReqTagInfoFunc = std::function<const ReqTagInfo*(const C&)>;
+
+      // a function that can be called to update client tag information
+      using ReqTagUpdtFunc = std::function<void(const C&,
+                                                const RequestTag&)>;
 
       bool empty() const {
 	DataGuard g(data_mtx);
@@ -803,7 +810,10 @@ namespace crimson {
       };
 
       ClientInfoFunc        client_info_f;
+      ReqTagInfoFunc        reqtag_info_f;
+      ReqTagUpdtFunc        reqtag_updt_f;
       static constexpr bool is_dynamic_cli_info_f = U1;
+      static constexpr bool is_dynamic_tag_info_f = U2;
 
 #ifdef WITH_SEASTAR
       static constexpr int data_mtx = 0;
@@ -912,6 +922,41 @@ namespace crimson {
 	  std::unique_ptr<RunEvery>(
 	    new RunEvery(check_time,
 			 std::bind(&PriorityQueueBase::do_clean, this)));
+      }
+
+
+      // Another common contructor which is similar to the above but with
+      // additional parameters for the server to update and read the latest
+      // tag for a client in case multiple queues are spawned for each server.
+      template<typename Rep, typename Per>
+      PriorityQueueBase(ClientInfoFunc _client_info_f,
+                        ReqTagInfoFunc _reqtag_info_f,
+                        ReqTagUpdtFunc _reqtag_updt_f,
+                        std::chrono::duration<Rep,Per> _idle_age,
+                        std::chrono::duration<Rep,Per> _erase_age,
+                        std::chrono::duration<Rep,Per> _check_time,
+                        AtLimitParam at_limit_param,
+                        double _anticipation_timeout) :
+        client_info_f(_client_info_f),
+        reqtag_info_f(_reqtag_info_f),
+        reqtag_updt_f(_reqtag_updt_f),
+        at_limit(get_or_default(at_limit_param, AtLimit::Reject)),
+        reject_threshold(get_or_default(at_limit_param, RejectThreshold{0})),
+        anticipation_timeout(_anticipation_timeout),
+        finishing(false),
+        idle_age(std::chrono::duration_cast<Duration>(_idle_age)),
+        erase_age(std::chrono::duration_cast<Duration>(_erase_age)),
+        check_time(std::chrono::duration_cast<Duration>(_check_time)),
+        erase_max(standard_erase_max)
+      {
+        assert(_erase_age >= _idle_age);
+        assert(_check_time < _idle_age);
+        // AtLimit::Reject depends on ImmediateTagCalc
+        assert(at_limit != AtLimit::Reject || !IsDelayed);
+        cleaning_job =
+          std::unique_ptr<RunEvery>(
+            new RunEvery(check_time,
+                         std::bind(&PriorityQueueBase::do_clean, this)));
       }
 
 
@@ -1329,9 +1374,9 @@ namespace crimson {
     }; // class PriorityQueueBase
 
 
-    template<typename C, typename R, bool IsDelayed=false, bool U1=false, unsigned B=2>
-    class PullPriorityQueue : public PriorityQueueBase<C,R,IsDelayed,U1,B> {
-      using super = PriorityQueueBase<C,R,IsDelayed,U1,B>;
+    template<typename C, typename R, bool IsDelayed=false, bool U1=false, bool U2=false, unsigned B=2>
+    class PullPriorityQueue : public PriorityQueueBase<C,R,IsDelayed,U1,U2,B> {
+      using super = PriorityQueueBase<C,R,IsDelayed,U1,U2,B>;
 
     public:
 
@@ -1379,6 +1424,23 @@ namespace crimson {
       }
 
 
+      template<typename Rep, typename Per>
+      PullPriorityQueue(typename super::ClientInfoFunc _client_info_f,
+                        typename super::ReqTagInfoFunc _reqtag_info_f,
+                        typename super::ReqTagUpdtFunc _reqtag_updt_f,
+                        std::chrono::duration<Rep,Per> _idle_age,
+                        std::chrono::duration<Rep,Per> _erase_age,
+                        std::chrono::duration<Rep,Per> _check_time,
+                        AtLimitParam at_limit_param = AtLimit::Wait,
+                        double _anticipation_timeout = 0.0) :
+        super(_client_info_f, _reqtag_info_f, _reqtag_updt_f,
+              _idle_age, _erase_age, _check_time,
+              at_limit_param, _anticipation_timeout)
+      {
+        // empty
+      }
+
+
       // pull convenience constructor
       PullPriorityQueue(typename super::ClientInfoFunc _client_info_f,
 			AtLimitParam at_limit_param = AtLimit::Wait,
@@ -1391,6 +1453,29 @@ namespace crimson {
 			  _anticipation_timeout)
       {
 	// empty
+      }
+
+
+      // alternate pull convenience constructor to help clients of dmClock
+      // specify functions to help the server read and update the client
+      // tag information in case there are multiple mClock queues spawned
+      // per server. Maintaining the tag information is the responsibility
+      // of the dmClock client(s).
+      PullPriorityQueue(typename super::ClientInfoFunc _client_info_f,
+                        typename super::ReqTagInfoFunc _reqtag_info_f,
+                        typename super::ReqTagUpdtFunc _reqtag_updt_f,
+                        AtLimitParam at_limit_param = AtLimit::Wait,
+                        double _anticipation_timeout = 0.0) :
+        PullPriorityQueue(_client_info_f,
+                          _reqtag_info_f,
+                          _reqtag_updt_f,
+                          standard_idle_age,
+                          standard_erase_age,
+                          standard_check_time,
+                          at_limit_param,
+                          _anticipation_timeout)
+      {
+        // empty
       }
 
 
@@ -1556,12 +1641,12 @@ namespace crimson {
 #ifndef WITH_SEASTAR
     // TODO: PushPriorityQueue is not ported to seastar yet
     // PUSH version
-    template<typename C, typename R, bool IsDelayed=false, bool U1=false, unsigned B=2>
-    class PushPriorityQueue : public PriorityQueueBase<C,R,IsDelayed,U1,B> {
+    template<typename C, typename R, bool IsDelayed=false, bool U1=false, bool U2=false, unsigned B=2>
+    class PushPriorityQueue : public PriorityQueueBase<C,R,IsDelayed,U1,U2,B> {
 
     protected:
 
-      using super = PriorityQueueBase<C,R,IsDelayed,U1,B>;
+      using super = PriorityQueueBase<C,R,IsDelayed,U1,U2,B>;
 
     public:
 
