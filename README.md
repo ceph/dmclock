@@ -1,9 +1,19 @@
-# dmclock
+# dmclock (deprecated)
 
 This repository contains C++ 11 code that implements the dmclock
 distributed quality of service algorithm. See __mClock: Handling
 Throughput Variability for Hypervisor IO Scheduling__ by Gulati,
 Merchant, and Varman for a description of the algorithm.
+
+## Important Notice
+
+This repository has been archived. Due to no known users outside
+of Ceph, we have moved the dmclock project directly into the
+[Ceph repository](https://github.com/ceph/ceph) to simplify backports
+and maintenance.
+
+For any contributions or further development of dmclock, please submit 
+pull requests to the [Ceph project](https://github.com/ceph/ceph).
 
 ## Bugs and features
 
